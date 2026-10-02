@@ -1,7 +1,7 @@
 const http = require('http');
 const crypto = require('crypto');
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 // Generate 10MB of random dummy data in memory once to save CPU
 const dummyData10MB = crypto.randomBytes(10 * 1024 * 1024);
 
