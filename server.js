@@ -1,58 +1,68 @@
-const http = require('http');
+const express = require('express');
+const cors = require('cors');
 const crypto = require('crypto');
 
+const app = express();
 const PORT = process.env.PORT || 3000;
-// Generate 10MB of random dummy data in memory once to save CPU
-const dummyData10MB = crypto.randomBytes(10 * 1024 * 1024);
 
-const server = http.createServer((req, res) => {
-    // Set CORS headers so your frontend can talk to this backend
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    
-    // Handle options preflight requests
-    if (req.method === 'OPTIONS') {
-        res.writeHead(204);
-        res.end();
-        return;
-    }
+// Enable CORS so your website frontend can make requests
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
 
-    // 1. Ping endpoint
-    if (req.method === 'GET' && req.url === '/ping') {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('pong');
-        return;
-    }
-
-    // 2. Download endpoint (Sends the 10MB file)
-    if (req.method === 'GET' && req.url === '/download') {
-        res.writeHead(200, {
-            'Content-Type': 'application/octet-stream',
-            'Content-Length': dummyData10MB.length,
-            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-        });
-        res.end(dummyData10MB);
-        return;
-    }
-
-    // 3. Upload endpoint (Receives dummy data from browser)
-    if (req.method === 'POST' && req.url === '/upload') {
-        let bodySize = 0;
-        req.on('data', (chunk) => {
-            bodySize += chunk.length;
-        });
-        req.on('end', () => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'success', receivedBytes: bodySize }));
-        });
-        return;
-    }
-
-    res.writeHead(404);
-    res.end('Not Found');
+// Prevent browser from caching speed test data
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
 });
 
-server.listen(PORT, () => {
-    console.log(`Speed test server is running on http://localhost:${PORT}`);
+// 1. PING Endpoint (for measuring latency)
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
+// 2. DOWNLOAD Endpoint (streams dummy binary data)
+app.get('/download', (req, res) => {
+  const sizeInMB = parseInt(req.query.size) || 25; // Default 25MB chunk
+  const chunkSize = 1024 * 1024; // 1MB
+  const totalBytes = sizeInMB * 1024 * 1024;
+  const dummyBuffer = crypto.randomBytes(chunkSize);
+
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Length', totalBytes);
+
+  let sentBytes = 0;
+  function sendChunks() {
+    while (sentBytes < totalBytes) {
+      const remainingBytes = totalBytes - sentBytes;
+      const currentChunkSize = Math.min(chunkSize, remainingBytes);
+      const canContinue = res.write(dummyBuffer.subarray(0, currentChunkSize));
+      sentBytes += currentChunkSize;
+      if (!canContinue) {
+        res.once('drain', sendChunks);
+        return;
+      }
+    }
+    res.end();
+  }
+  sendChunks();
+});
+
+// 3. UPLOAD Endpoint (measures upload speed by reading incoming stream)
+app.post('/upload', (req, res) => {
+  let receivedBytes = 0;
+  req.on('data', (chunk) => {
+    receivedBytes += chunk.length;
+  });
+  req.on('end', () => {
+    res.status(200).json({ status: 'ok', receivedBytes });
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
